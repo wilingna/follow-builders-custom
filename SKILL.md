@@ -464,3 +464,81 @@ When the user invokes `/ai` or asks for their digest manually:
 1. Skip cron check — run the digest workflow immediately
 2. Use the same fetch → remix → deliver flow as the cron run
 3. Tell the user you're fetching fresh content (it takes a minute or two)
+
+---
+
+## Custom Commands (Personal Extension)
+
+These are personal remix modes layered on top of the same data pipeline —
+they do NOT change fetching, sourcing, or the `/ai` flow above.
+
+- `/eng` — extract an English learning pack (sentence patterns / vocab / grammar)
+  from today's material
+- `/shadow <keyword or item number>` — rewrite one item into a ~1-minute English
+  shadowing script AND generate a reference-accent audio file for it
+- `/script <keyword or item number>` — write a ≤3-minute spoken video script
+  connecting one item to the user's own project work
+- `/blogdraft <keyword or item number>` — draft a blog post applying enterprise
+  AI-adoption analysis to one item
+
+### Routing logic
+
+1. Run `cd ${CLAUDE_SKILL_DIR}/scripts && node prepare-digest.js 2>/dev/null`
+   to get today's JSON (same script the `/ai` flow uses — do not fetch anything
+   yourself).
+2. Locate the target item in the JSON's `podcasts` / `x` arrays:
+   - If the user gave a number, treat it as a 1-based index into that day's items
+     (podcast items first, then tweets, in the order they'd appear in the digest).
+   - If the user gave a keyword, match it against tweet text / podcast title /
+     builder name.
+   - If nothing matches, ask the user to pick from a short numbered list of
+     today's items instead of guessing.
+3. Load the matching prompt file from `~/.follow-builders/prompts/custom/`:
+   - `/eng` → `english-patterns.md`
+   - `/shadow` → `shadowing-script.md`
+   - `/script` → `insight-script.md`
+   - `/blogdraft` → `blog-insight.md`
+   If the file is missing, fall back to the closest default prompt in
+   `${CLAUDE_SKILL_DIR}/prompts/` and tell the user their customization for
+   that command isn't installed.
+4. Apply the loaded prompt to the selected item's content (transcript excerpt or
+   tweet text) and write the output.
+5. **`/shadow` only** — after generating the script text, save it to a temp file
+   and run:
+   ```bash
+   cd ${CLAUDE_SKILL_DIR}/scripts && node generate-audio.js <script-file> [output-mp3-path]
+   ```
+   Report both the script text and the resulting mp3 path back to the user. If
+   `OPENAI_API_KEY` is missing from `~/.follow-builders/.env`, tell the user to
+   add it there and skip audio generation (still return the text).
+
+None of the above reuses or increases fetch frequency — it's the same JSON
+`prepare-digest.js` already produces for `/ai`.
+
+---
+
+## `/lookup <person name>` (Independent — On-Demand Person Search)
+
+This command is **fully independent of the digest pipeline**. Do NOT run
+`prepare-digest.js`, and do NOT read `feed-x.json` / `feed-podcasts.json` /
+`feed-blogs.json` / `state-feed.json` for this command. It runs a live web
+search only when the user explicitly types `/lookup <name>` — it never runs
+on a schedule and never increases the daily fetch pipeline's frequency.
+
+### Routing logic
+
+1. Load `~/.follow-builders/prompts/custom/lookup.md`. If missing, tell the
+   user this command isn't set up and stop.
+2. Follow `lookup.md`'s instructions: search the web for a notable, recent
+   (~last 1-2 months) interview/podcast/public statement by the named person,
+   record its exact source (outlet, title, date, URL), and read the actual
+   content closely enough to represent it accurately.
+3. Ask the user which output style they want — 口播稿 (`insight-script.md`)
+   or 博客 (`blog-insight.md`) — before writing anything.
+4. Apply the chosen style prompt (same file used by `/script` or `/blogdraft`)
+   to the content you found, exactly as it's applied to a digest item.
+5. End the output with a "信息来源" section citing source name, title, date,
+   and the direct URL.
+
+If no sufficiently recent, substantive source can be found, say so explicitly
+instead of stretching a thin or stale one to fit.
